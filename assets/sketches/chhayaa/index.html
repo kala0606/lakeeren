@@ -37,11 +37,29 @@
     </style>
   </head>
   <body>
+    <div id="lk-start" style="position:fixed;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;z-index:9999;cursor:pointer">
+      <div style="text-align:center;color:#fff;font-family:monospace">
+        <p style="font-size:18px;margin:0 0 20px">▶ Tap to begin — uses your camera</p>
+        <p style="font-size:12px;color:#aaa">Click inside to start</p>
+      </div>
+    </div>
     <div id="p5Canvas"></div>
     <div id="audioHint" style="position:fixed;bottom:12px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,0.8);font:14px system-ui,sans-serif;pointer-events:none;z-index:10;">
       Click anywhere to enable audio. If no sound: run a local server (e.g. <code>npx serve</code>) and open this page via http://localhost:3000
     </div>
     <div id="flipDebug" style="display:none;position:fixed;top:10px;left:10px;color:lime;font:14px monospace;z-index:100;pointer-events:none;"></div>
+    <script>
+      document.getElementById('lk-start').addEventListener('click', async function(){
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          stream.getTracks().forEach(t => t.stop());
+          this.remove();
+        } catch(e) {
+          console.error('Camera permission denied:', e);
+          alert('Camera permission needed to use Chhayaa');
+        }
+      });
+    </script>
     <script src="sketch.js"></script>
   </body>
 </html>

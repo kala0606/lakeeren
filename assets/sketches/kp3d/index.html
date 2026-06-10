@@ -86,6 +86,12 @@
     </style>
 </head>
 <body>
+    <div id="lk-start" style="position:fixed;inset:0;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;z-index:9999;cursor:pointer">
+      <div style="text-align:center;color:#fff;font-family:monospace">
+        <p style="font-size:18px;margin:0 0 20px">▶ Tap to begin — uses your microphone</p>
+        <p style="font-size:12px;color:#aaa">Click inside to start</p>
+      </div>
+    </div>
     <div id="controls" style="display: none;">
         <div class="control-item">
             <strong>VJ System Controls</strong>
@@ -146,7 +152,21 @@
     <script src="grid.js"></script>
     <script src="sine.js"></script>
     <script src="sketch.js"></script>
-    
+
+    <script>
+        // Request microphone permission on start overlay click
+        document.getElementById('lk-start').addEventListener('click', async function(){
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream.getTracks().forEach(t => t.stop());
+            this.remove();
+          } catch(e) {
+            console.error('Microphone permission denied:', e);
+            alert('Microphone permission needed to use KP3D');
+          }
+        });
+    </script>
+
     <script>
         // UI Control Script
         let startBtn = document.getElementById('startBtn');
