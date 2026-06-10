@@ -66,10 +66,6 @@ let s = 10;
 let WIDTH, HEIGHT, DIM, M;
 let ds = 1.0; // Dynamic size multiplier based on audio
 
-// Anaglyph variables
-let anaglyph;
-let anaglyphMode = false;
-
 // Audio filtering simulation
 let filteredSignal = [];
 let filterBuffer = [];
@@ -113,11 +109,8 @@ function setup() {
   initializeBoids();
   initializeGrid();
   initializeSine();
-  
-  // Initialize anaglyph
-  anaglyph = createAnaglyph(this);
-  
-  console.log("Setup complete. Press 'd' to toggle debug info, SPACE to toggle 3D anaglyph.");
+
+  console.log("Setup complete. Press 'd' to toggle debug info.");
 }
 
 function draw() {
@@ -146,30 +139,18 @@ function draw() {
     switchIt();
   }
   
-  // Render with or without anaglyph effect
-  if (anaglyphMode) {
-    anaglyph.draw(scene);
-  } else {
-    scene(this);
-  }
-  
-  // Show debug info if enabled (always on top, not affected by anaglyph)
+  // Render scene
+  scene(this);
+
+  // Show debug info if enabled
   if (showDebug) {
     drawDebugInfo();
   }
 }
 
-// Scene function for both normal and anaglyph rendering
+// Scene function
 function scene(pg) {
-  // Only draw background in 3D anaglyph mode for better contrast
-  if (anaglyphMode) {
-    if (str) {
-      pg.background(255); // White background when strobing in 3D
-    } else {
-      pg.background(0); // Black background in 3D
-    }
-  }
-  // No background in normal mode - transparent
+  // No background - transparent
   
   // Lighting
   pg.ambientLight(100);
@@ -459,11 +440,6 @@ function getRandomChoice(choices) {
 }
 
 function keyPressed() {
-  if (key === ' ') {
-    // Toggle anaglyph mode
-    anaglyphMode = !anaglyphMode;
-    console.log("Anaglyph mode:", anaglyphMode ? "ON (Red/Cyan 3D)" : "OFF");
-  }
   if (key === 's' || key === 'S') {
     strobe();
   }
