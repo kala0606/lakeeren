@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VJ System - p5.js</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: black;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 5px;
+            font-size: 12px;
+            z-index: 1000;
+            max-width: 250px;
+        }
+        
+        #info {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            z-index: 1000;
+        }
+        
+        .control-item {
+            margin: 5px 0;
+        }
+        
+        #micStatus {
+            color: #ff4444;
+            font-weight: bold;
+        }
+        
+        #micStatus.active {
+            color: #44ff44;
+        }
+        
+        button {
+            background: #333;
+            color: white;
+            border: 1px solid #666;
+            padding: 8px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            margin: 2px;
+            font-size: 11px;
+        }
+        
+        button:hover {
+            background: #555;
+        }
+        
+        button:disabled {
+            background: #222;
+            color: #666;
+            cursor: not-allowed;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        
+        .status-red { background-color: #ff4444; }
+        .status-green { background-color: #44ff44; }
+        .status-yellow { background-color: #ffff44; }
+    </style>
+</head>
+<body>
+    <div id="controls" style="display: none;">
+        <div class="control-item">
+            <strong>VJ System Controls</strong>
+        </div>
+        <div class="control-item">
+            SPACE: Toggle 3D Anaglyph (Red/Cyan)
+        </div>
+        <div class="control-item">
+            S: Strobe Effect
+        </div>
+        <div class="control-item">
+            A: Switch Visual Mode
+        </div>
+        <div class="control-item">
+            R: Toggle Rotation
+        </div>
+        <div class="control-item">
+            D: Toggle Debug Info
+        </div>
+        <div class="control-item">
+            M: Manual Mic Start
+        </div>
+        <div class="control-item">
+            <span class="status-indicator status-red" id="micIndicator"></span>
+            <span id="micStatus">Microphone: OFF</span>
+        </div>
+        <div class="control-item">
+            <button id="startBtn">Start Audio</button>
+            <button id="testBtn">Test Mic</button>
+        </div>
+        <div class="control-item">
+            <div id="audioStatus">Audio Level: 0</div>
+        </div>
+    </div>
+    
+    <div id="welcome" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; background: rgba(0, 0, 0, 0.8); padding: 20px; border-radius: 10px; text-align: center; z-index: 1001;">
+        <h2>VJ System</h2>
+        <p>Press <strong>'D'</strong> to toggle controls</p>
+        <p>Click anywhere to dismiss</p>
+    </div>
+    
+    <div id="info" style="display: none;">
+        <div>Audio-Reactive 3D VJ System</div>
+        <div>Mode: <span id="currentMode">1</span></div>
+        <div>Signal: <span id="signalLevel">0</span></div>
+        <div>FPS: <span id="fpsDisplay">0</span></div>
+    </div>
+
+    <!-- p5.js and p5.sound libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/addons/p5.sound.min.js"></script>
+    <!-- p5.anaglyph library for red/cyan 3D effect -->
+    <script src="https://cdn.statically.io/gh/jdeboi/p5.anaglyph/main/dist/p5.anaglyph.min.js"></script>
+    
+    <!-- Our VJ system scripts -->
+    <script src="boid.js"></script>
+    <script src="whiteBoid.js"></script>
+    <script src="grid.js"></script>
+    <script src="sine.js"></script>
+    <script src="sketch.js"></script>
+    
+    <script>
+        // UI Control Script
+        let startBtn = document.getElementById('startBtn');
+        let testBtn = document.getElementById('testBtn');
+        let micStatus = document.getElementById('micStatus');
+        let micIndicator = document.getElementById('micIndicator');
+        let currentModeDisplay = document.getElementById('currentMode');
+        let signalLevelDisplay = document.getElementById('signalLevel');
+        let audioStatusDisplay = document.getElementById('audioStatus');
+        let fpsDisplay = document.getElementById('fpsDisplay');
+        
+        let lastFrameTime = 0;
+        let frameCounter = 0;
+        
+        startBtn.addEventListener('click', async function() {
+            try {
+                console.log('Starting audio...');
+                
+                // Resume audio context
+                if (typeof getAudioContext === 'function') {
+                    await getAudioContext().resume();
+                    console.log('Audio context resumed');
+                }
+                
+                // Start microphone
+                if (typeof mic !== 'undefined' && mic) {
+                    mic.start();
+                    console.log('Microphone start requested');
+                    
+                    // Wait a bit and check if it started
+                    setTimeout(() => {
+                        if (mic.enabled) {
+                            micStatus.textContent = 'Microphone: ON';
+                            micIndicator.className = 'status-indicator status-green';
+                            startBtn.textContent = 'Audio Started';
+                            startBtn.disabled = true;
+                            console.log('Microphone successfully started');
+                        } else {
+                            micStatus.textContent = 'Microphone: FAILED';
+                            micIndicator.className = 'status-indicator status-red';
+                            console.log('Microphone failed to start');
+                        }
+                    }, 1000);
+                } else {
+                    console.log('Microphone object not found');
+                    micStatus.textContent = 'Microphone: NOT FOUND';
+                }
+                
+            } catch (error) {
+                console.error('Error starting audio:', error);
+                micStatus.textContent = 'Microphone: ERROR';
+                micIndicator.className = 'status-indicator status-red';
+            }
+        });
+        
+        testBtn.addEventListener('click', function() {
+            console.log('Testing microphone...');
+            
+            // Test basic microphone access
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.getUserMedia({ audio: true })
+                    .then(function(stream) {
+                        console.log('Microphone access granted');
+                        micStatus.textContent = 'Microphone: ACCESS OK';
+                        micIndicator.className = 'status-indicator status-yellow';
+                        
+                        // Stop the test stream
+                        stream.getTracks().forEach(track => track.stop());
+                        
+                        // Now try to start the p5.js microphone
+                        if (typeof mic !== 'undefined' && mic) {
+                            mic.start();
+                        }
+                    })
+                    .catch(function(error) {
+                        console.error('Microphone access denied:', error);
+                        micStatus.textContent = 'Microphone: ACCESS DENIED';
+                        micIndicator.className = 'status-indicator status-red';
+                    });
+            } else {
+                micStatus.textContent = 'Microphone: NOT SUPPORTED';
+                micIndicator.className = 'status-indicator status-red';
+            }
+        });
+        
+        // Update UI in the draw loop
+        function updateUI() {
+            if (typeof sw !== 'undefined') {
+                currentModeDisplay.textContent = sw;
+            }
+            
+            if (typeof filteredSignal !== 'undefined' && filteredSignal[3]) {
+                signalLevelDisplay.textContent = Math.round(filteredSignal[3] * 10) / 10;
+            }
+            
+            if (typeof micLevel !== 'undefined') {
+                audioStatusDisplay.textContent = 'Audio Level: ' + (micLevel * 100).toFixed(1);
+            }
+            
+            // Calculate FPS
+            frameCounter++;
+            if (frameCounter % 60 === 0) {
+                let currentTime = performance.now();
+                if (lastFrameTime > 0) {
+                    let fps = 60000 / (currentTime - lastFrameTime);
+                    fpsDisplay.textContent = Math.round(fps);
+                }
+                lastFrameTime = currentTime;
+            }
+        }
+        
+        // Override the original draw function to include UI updates
+        let originalDraw;
+        function setupUIUpdates() {
+            if (typeof draw === 'function') {
+                originalDraw = draw;
+                window.draw = function() {
+                    originalDraw();
+                    updateUI();
+                };
+            }
+        }
+        
+        // Setup UI updates after p5.js loads
+        setTimeout(setupUIUpdates, 1000);
+        
+        // Browser compatibility check
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            micStatus.textContent = 'Microphone: NOT SUPPORTED';
+            micIndicator.className = 'status-indicator status-red';
+            startBtn.style.display = 'none';
+            testBtn.style.display = 'none';
+        }
+        
+        // Additional debugging
+        window.addEventListener('load', function() {
+            console.log('Page loaded');
+            console.log('User agent:', navigator.userAgent);
+            console.log('HTTPS:', location.protocol === 'https:');
+            console.log('Localhost:', location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+            
+            // Handle welcome message
+            let welcomeDiv = document.getElementById('welcome');
+            let controlsDiv = document.getElementById('controls');
+            let infoDiv = document.getElementById('info');
+            
+            // Show controls briefly on load
+            controlsDiv.style.display = 'block';
+            infoDiv.style.display = 'block';
+            
+            // Hide them after 3 seconds
+            setTimeout(() => {
+                controlsDiv.style.display = 'none';
+                infoDiv.style.display = 'none';
+            }, 3000);
+            
+            // Hide welcome message when clicked
+            welcomeDiv.addEventListener('click', function() {
+                welcomeDiv.style.display = 'none';
+            });
+            
+            // Hide welcome message after 5 seconds
+            setTimeout(() => {
+                welcomeDiv.style.display = 'none';
+            }, 5000);
+            
+            // Hide welcome message when any key is pressed
+            document.addEventListener('keydown', function() {
+                welcomeDiv.style.display = 'none';
+            });
+        });
+    </script>
+</body>
+</html> 
+<!-- lakeeren: output-only, click-to-start mic -->
+<style>
+  #controls,#info,#welcome{display:none!important}
+  canvas{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;display:block!important}
+  #lk-start{position:fixed;inset:0;z-index:2000;display:flex;align-items:center;justify-content:center;
+    background:rgba(0,0,0,.72);color:#fff;font-family:monospace;font-size:14px;letter-spacing:.18em;
+    text-transform:uppercase;cursor:pointer;text-align:center}
+</style>
+<script>
+  addEventListener('load',function(){
+    var ov=document.createElement('div');
+    ov.id='lk-start';
+    ov.innerHTML='▶&nbsp;&nbsp;Tap to begin — uses your microphone';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', async function(){
+      try{
+        if (typeof getAudioContext==='function') await getAudioContext().resume();
+        if (typeof mic!=='undefined' && mic) mic.start();
+      }catch(e){console.error(e);}
+      ov.remove();
+    });
+  });
+</script>

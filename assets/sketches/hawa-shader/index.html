@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HAWA — shader</title>
+<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0a0a0a}
+#shaderCanvas{position:fixed;inset:0;width:100vw;height:100vh}</style>
+</head>
+<body>
+<canvas id="shaderCanvas"></canvas>
+<script>
+  (function() {
+    'use strict';
+
+    /* Grain + Glow–style preset (noise-shader tuning) */
+    const SHADER_PRESET = {
+      bg: [0x70 / 255, 0x70 / 255, 0x70 / 255],
+      baseSize: 8,
+      brightness: 0.13,
+      grainAmount: 0.58,
+      ridgeScale: 0.21,
+      ridgeThreshold: 0.105,
+      warpScale: 0.15,
+      warpStrength: 0.05,
+      heightScale: 0.5,
+      heightAmp: 0.2,
+      fftSmooth: 0.36,
+      lowHz: 270,
+      midHz: 2716,
+      highHz: 13528,
+      lowGain: 1.48,
+      midGain: 0.24,
+      highGain: 2.35,
+      fftResponse: 0.73,
+      accumAdd: 0.03,
+      flowSpeed: 0.95,
+      noiseZScale: 0.24,
+      vignette: 0.24,
+      filmGrain: 0.32,
+      grainSize: 1.6,
+      exposure: 0.5,
+      contrast: 0.53,
+    };
+
+    // ── Consent page shader overrides (edit these!) ──
+    const CONSENT_SHADER = {
+      brightness: 0.08,
+      grainAmount: 0.4,
+      ridgeScale: 0.15,
+      ridgeThreshold: 0.08,
+      warpScale: 0.10,
+      warpStrength: 0.03,
+      heightScale: 0.3,
+      heightAmp: 0.1,
+      vignette: 0.4,
+      filmGrain: 0.25,
+      exposure: 0.35,
+      contrast: 0.45,
+    };
+
+    // ── ShaderAudioBridge ──
+    window.ShaderAudioBridge = {
+      _fft: null,
+      pushFFT(fftMagnitudes) { this._fft = Float32Array.from(fftMagnitudes); },
+      pushAmplitude(rms) { this._fft = new Float32Array([Math.max(0, Math.min(1, rms))]); },
+      consume() { const d = this._fft; this._fft = null; return d; }
+    };
+
+    const canvas = document.getElementById('shaderCanvas');
+    const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, powerPreference: 'high-performance' });
+    if (!gl) { console.warn('WebGL2 not supported — shader background disabled'); return; }
+
+    // ── Resize ──
+    const dpr = window.devicePixelRatio || 1;
+    function resize() {
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      mvp = buildMVP(canvas.width, canvas.height);
+    }
+
+    // ── Matrix helpers ──
+    function perspectiveM(fovDeg, aspect, near, far) {
+      const f = 1.0 / Math.tan(fovDeg * Math.PI / 360.0);
+      const nf = 1.0 / (near - far);
+      return new Float32Array([
+        f / aspect, 0, 0, 0,
+        0, f, 0, 0,
+        0, 0, (far + near) * nf, -1,
+        0, 0, 2 * far * near * nf, 0
+      ]);
+    }
+
+    function lookAtM(eye, center, up) {
+      const zx = eye[0]-center[0], zy = eye[1]-center[1], zz = eye[2]-center[2];
+      let len = 1/Math.hypot(zx,zy,zz);
+      const fzx=zx*len, fzy=zy*len, fzz=zz*len;
+      const sx = up[1]*fzz - up[2]*fzy, sy = up[2]*fzx - up[0]*fzz, sz = up[0]*fzy - up[1]*fzx;
+      len = 1/Math.hypot(sx,sy,sz);
+      const fsx=sx*len, fsy=sy*len, fsz=sz*len;
+      const ux = fzy*fsz - fzz*fsy, uy = fzz*fsx - fzx*fsz, uz = fzx*fsy - fzy*fsx;
+      return new Float32Array([
+        fsx, ux, fzx, 0,
+        fsy, uy, fzy, 0,
+        fsz, uz, fzz, 0,
+        -(fsx*eye[0]+fsy*eye[1]+fsz*eye[2]),
+        -(ux*eye[0]+uy*eye[1]+uz*eye[2]),
+        -(fzx*eye[0]+fzy*eye[1]+fzz*eye[2]),
+        1
+      ]);
+    }
+
+    function multiplyMM(a, b) {
+      const r = new Float32Array(16);
+      for (let i = 0; i < 4; i++)
+        for (let j = 0; j < 4; j++)
+          r[j*4+i] = a[i]*b[j*4] + a[4+i]*b[j*4+1] + a[8+i]*b[j*4+2] + a[12+i]*b[j*4+3];
+      return r;
+    }
+
+    function buildMVP(w, h) {
+      const aspect = w / h;
+      const fovDeg = 60;
+      const tanHalf = Math.tan(fovDeg * Math.PI / 360);
+      // World plane: Y in [-4,4], X in [-4*aspect, 4*aspect] (see vertex uAspect) — match screen ratio.
+      const halfY = 4.0;
+      const distV = halfY / tanHalf;
+      const distH = (halfY * aspect) / (aspect * tanHalf);
+      const dist = Math.max(distV, distH) * 0.89;
+      const proj = perspectiveM(fovDeg, aspect, 0.1, 80);
+      const view = lookAtM([0, 0, dist], [0, 0, 0], [0, 1, 0]);
+      return multiplyMM(proj, view);
+    }
+
+    // ── Compile shaders ──
+    function compileShader(type, src) {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(s));
+        gl.deleteShader(s);
+        return null;
+      }
+      return s;
+    }
+
+    const VERT_SRC = `#version 300 es
+precision highp float;
+
+layout(location = 0) in vec3 position;
+layout(location = 1) in float aSeed;
+
+uniform mat4 uMVP;
+uniform float uTime, uLow, uMid, uHigh, uAmplitude, uSoundAccum, uFlowX;
+uniform float uAspect;
+uniform float uBaseSize, uPixelRatio;
+uniform float uRidgeScale, uRidgeThreshold;
+uniform float uWarpScale, uWarpStrength;
+uniform float uHeightScale, uHeightAmp;
+
+out float vMask;
+out float vSpark;
+out float vTone;
+
+float hash11(float p){
+  p=fract(p*0.1031); p*=p+33.33; p*=p+p; return fract(p);
+}
+
+float hash31(vec3 p){
+  vec3 q = fract(p * 0.1031);
+  q += dot(q, q.yzx + 33.33);
+  return fract((q.x + q.y) * q.z);
+}
+
+float noise3(vec3 p){
+  vec3 i = floor(p), f = fract(p), u = f*f*(3.0-2.0*f);
+  float n000 = hash31(i);
+  float n100 = hash31(i + vec3(1,0,0));
+  float n010 = hash31(i + vec3(0,1,0));
+  float n110 = hash31(i + vec3(1,1,0));
+  float n001 = hash31(i + vec3(0,0,1));
+  float n101 = hash31(i + vec3(1,0,1));
+  float n011 = hash31(i + vec3(0,1,1));
+  float n111 = hash31(i + vec3(1,1,1));
+  return mix(
+    mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y),
+    mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y),
+    u.z
+  );
+}
+
+float fbm3(vec3 p){
+  float v = 0.0, amp = 0.5;
+  for(int i = 0; i < 5; i++){
+    v += amp * noise3(p);
+    p = p * 2.03 + vec3(11.7, 8.4, 3.17);
+    amp *= 0.52;
+  }
+  return v;
+}
+
+void main(){
+  vec3 pos = position;
+  pos.x *= uAspect;
+  float t = uTime * 0.2;
+  vec2 domain = pos.xy;
+  domain.x -= uFlowX;
+  float noiseZ = uSoundAccum;
+
+  vec3 warpP = vec3(domain * uWarpScale + vec2(aSeed * 0.01, 0.0), noiseZ);
+  float warp = uWarpStrength * uAmplitude;
+  float ox = (noise3(warpP) - 0.5) * 2.0 * warp;
+  float oy = (noise3(vec3(domain * uWarpScale + vec2(5.2, 10.3) + aSeed * 0.01, noiseZ)) - 0.5) * 2.0 * warp;
+  vec2 warpedXZ = domain + vec2(ox, oy);
+
+  vec3 heightP = vec3(warpedXZ * uHeightScale + vec2(0.0, t), noiseZ);
+  float heightNoise = fbm3(heightP);
+  float waveHeight = uHeightAmp * (1.0 + uAmplitude * 0.6);
+  pos.z = waveHeight * (heightNoise - 0.5);
+
+  float elev = (heightNoise - 0.5) * 2.0;
+  vec3 ridgeP = vec3(warpedXZ * uRidgeScale + vec2(0.0, t * 0.4), noiseZ);
+  float ridges = abs(fbm3(ridgeP) - 0.52);
+  float vein = smoothstep(uRidgeThreshold, 0.0, ridges);
+
+  float mask = clamp(vein * 0.9 + elev * 0.3, 0.0, 1.0);
+  float sparkle = hash11(aSeed + floor(uTime * 12.0));
+  float sparkMask = smoothstep(0.7 - uHigh * 0.2, 1.0, sparkle);
+
+  float base = uBaseSize * (1.0 + uAmplitude * 0.8);
+  float ps = base * (0.5 + mask * 0.8 + sparkMask * uHigh * 0.5);
+  ps *= uPixelRatio;
+
+  vMask = mask;
+  vSpark = sparkMask;
+  vTone = clamp(mask * 0.9 + sparkMask * 0.5 + uHigh * 0.15, 0.0, 1.0);
+
+  gl_Position = uMVP * vec4(pos, 1.0);
+  gl_PointSize = max(ps, 0.5);
+}`;
+
+    const FRAG_SRC = `#version 300 es
+precision highp float;
+
+uniform float uTime, uHigh, uAmplitude, uGrainAmount, uBrightness;
+uniform vec3 uTintColor;
+uniform vec3 uTintShadow;
+uniform vec2 uResolution;
+uniform float uVignette, uFilmGrainPost, uGrainPixelScale, uExposure, uContrast;
+
+in float vMask;
+in float vSpark;
+in float vTone;
+
+out vec4 fragColor;
+
+float hash21(vec2 p){
+  vec3 p3=fract(vec3(p.xyx)*0.1031);
+  p3+=dot(p3,p3.yzx+33.33);
+  return fract((p3.x+p3.y)*p3.z);
+}
+
+void main(){
+  vec2 uv = gl_PointCoord * 2.0 - 1.0;
+  float r2 = dot(uv, uv);
+  if(r2 > 1.0) discard;
+
+  float falloff = exp(-r2 * 3.8);
+  float core = exp(-r2 * 10.5);
+
+  float grain = hash21(gl_FragCoord.xy * 0.47 * uGrainPixelScale + vec2(uTime * 9.0, uTime * -7.0));
+  float dither = smoothstep(0.25 - uHigh * 0.1, 1.0, grain);
+
+  float alpha = falloff * (0.22 + vMask * 1.05 + vSpark * 0.75 + core * 0.7);
+  alpha *= mix(1.0 - uGrainAmount, 1.0, dither);
+  alpha *= (0.62 + uAmplitude * 0.9);
+  alpha = clamp(alpha, 0.0, 1.0);
+
+  float tone = clamp(vTone + core * 0.5, 0.0, 1.0);
+  vec3 color = mix(uTintShadow, uTintColor, tone) * uBrightness;
+
+  vec2 ndc = gl_FragCoord.xy / uResolution * 2.0 - 1.0;
+  ndc.x *= uResolution.x / max(uResolution.y, 1.0);
+  float vig = 1.0 - uVignette * pow(clamp(length(ndc), 0.0, 1.2), 1.35);
+  color.rgb *= vig;
+
+  float fg = hash21(gl_FragCoord.xy * uGrainPixelScale * 0.31 + vec2(uTime * 31.0, uTime * 17.0));
+  color.rgb += (fg - 0.5) * uFilmGrainPost * 0.35;
+
+  color.rgb = (color.rgb - 0.5) * uContrast + 0.5;
+  color.rgb *= uExposure;
+
+  fragColor = vec4(color, alpha);
+}`;
+
+    // ── Build program ──
+    const vs = compileShader(gl.VERTEX_SHADER, VERT_SRC);
+    const fs = compileShader(gl.FRAGMENT_SHADER, FRAG_SRC);
+    if (!vs || !fs) return;
+
+    const prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      console.error(gl.getProgramInfoLog(prog));
+      return;
+    }
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+
+    // ── Uniform locations ──
+    const u = {};
+    ['uMVP','uTime','uLow','uMid','uHigh','uAmplitude','uSoundAccum','uFlowX','uAspect',
+     'uBaseSize','uPixelRatio','uRidgeScale','uRidgeThreshold',
+     'uWarpScale','uWarpStrength','uHeightScale','uHeightAmp',
+     'uGrainAmount','uBrightness','uTintColor','uTintShadow',
+     'uResolution','uVignette','uFilmGrainPost','uGrainPixelScale','uExposure','uContrast'
+    ].forEach(name => { u[name] = gl.getUniformLocation(prog, name); });
+
+    // ── Build ~39k point grid (lower res for performance) ──
+    const gridW = 200, gridH = 195;
+    const vertexCount = gridW * gridH;
+    const positions = new Float32Array(vertexCount * 3);
+    const seeds = new Float32Array(vertexCount);
+
+    // Simple seeded RNG
+    let rngState = 42;
+    function rng() { rngState = (rngState * 1664525 + 1013904223) & 0xFFFFFFFF; return (rngState >>> 0) / 4294967296; }
+
+    let idx = 0;
+    for (let iy = 0; iy < gridH; iy++) {
+      const y = -4 + 8 * iy / (gridH - 1);
+      for (let ix = 0; ix < gridW; ix++) {
+        const x = -4 + 8 * ix / (gridW - 1);
+        positions[idx * 3]     = x;
+        positions[idx * 3 + 1] = y;
+        positions[idx * 3 + 2] = 0;
+        seeds[idx] = rng() * 1000;
+        idx++;
+      }
+    }
+
+    // ── VAO + VBOs ──
+    const vao = gl.createVertexArray();
+    gl.bindVertexArray(vao);
+
+    const posBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+
+    const seedBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, seedBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, seeds, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 0, 0);
+
+    gl.bindVertexArray(null);
+
+    // ── GL state ──
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.disable(gl.DEPTH_TEST);
+    gl.depthMask(false);
+
+    // ── Apply shader params helper ──
+    function applyShaderParams(preset) {
+      gl.useProgram(prog);
+      gl.uniform1f(u.uBaseSize, preset.baseSize ?? SHADER_PRESET.baseSize);
+      gl.uniform1f(u.uBrightness, preset.brightness ?? SHADER_PRESET.brightness);
+      gl.uniform1f(u.uGrainAmount, preset.grainAmount ?? SHADER_PRESET.grainAmount);
+      gl.uniform1f(u.uRidgeScale, preset.ridgeScale ?? SHADER_PRESET.ridgeScale);
+      gl.uniform1f(u.uRidgeThreshold, preset.ridgeThreshold ?? SHADER_PRESET.ridgeThreshold);
+      gl.uniform1f(u.uWarpScale, preset.warpScale ?? SHADER_PRESET.warpScale);
+      gl.uniform1f(u.uWarpStrength, preset.warpStrength ?? SHADER_PRESET.warpStrength);
+      gl.uniform1f(u.uHeightScale, preset.heightScale ?? SHADER_PRESET.heightScale);
+      gl.uniform1f(u.uHeightAmp, preset.heightAmp ?? SHADER_PRESET.heightAmp);
+      gl.uniform1f(u.uPixelRatio, dpr);
+      gl.uniform1f(u.uVignette, preset.vignette ?? SHADER_PRESET.vignette);
+      gl.uniform1f(u.uFilmGrainPost, preset.filmGrain ?? SHADER_PRESET.filmGrain);
+      gl.uniform1f(u.uGrainPixelScale, preset.grainSize ?? SHADER_PRESET.grainSize);
+      gl.uniform1f(u.uExposure, preset.exposure ?? SHADER_PRESET.exposure);
+      gl.uniform1f(u.uContrast, preset.contrast ?? SHADER_PRESET.contrast);
+    }
+    window._applyShaderParams = applyShaderParams;
+    window._CONSENT_SHADER = CONSENT_SHADER;
+    window._SHADER_PRESET = SHADER_PRESET;
+
+    // Start with consent shader if not yet accepted, else default
+    const _onConsent = !localStorage.getItem('hawa-consent-accepted');
+    applyShaderParams(_onConsent ? CONSENT_SHADER : SHADER_PRESET);
+
+    // ── MVP ──
+    let mvp = buildMVP(canvas.width || 1, canvas.height || 1);
+    resize();
+    window.addEventListener('resize', resize);
+
+    // ── Audio state ──
+    let low = 0, mid = 0, high = 0, energy = 0;
+    let soundAccum = 0, flowX = 0, animationTime = 0;
+    let lastTime = performance.now() / 1000;
+
+    // ── Micro-interaction state ──
+    const micro = {
+      pulse: 0,         // whisper arrival swell (0–1, decays)
+      press: 0,         // record button held (0–1, lerps)
+      pressTarget: 0,
+      glitch: 0,        // glitch crackle (0–1, decays)
+      seal: 0,          // chain seal sparkle (0–1, decays)
+      breathPhase: 0,   // idle breathing (radians)
+      idleTime: 0,      // seconds since last audio/interaction
+    };
+
+    // Expose triggers
+    window._shaderPulse  = function() { micro.pulse = 1; };
+    window._shaderGlitch = function() { micro.glitch = 1; };
+    window._shaderSeal   = function() { micro.seal = 1; };
+    window._shaderPress  = function(v) { micro.pressTarget = v ? 1 : 0; };
+
+    function resampleToBands(fft) {
+      const P = SHADER_PRESET;
+      if (fft.length === 1) {
+        const a = fft[0];
+        return [a * P.lowGain, a * 0.7 * P.midGain, a * 0.4 * P.highGain];
+      }
+      const n = fft.length;
+      const binHz = 22050 / n;
+      let lowS = 0, lowC = 0, midS = 0, midC = 0, highS = 0, highC = 0;
+      for (let i = 0; i < n; i++) {
+        const hz = i * binHz;
+        if (hz < P.lowHz)       { lowS += fft[i]; lowC++; }
+        else if (hz < P.midHz) { midS += fft[i]; midC++; }
+        else if (hz < P.highHz){ highS += fft[i]; highC++; }
+      }
+      return [
+        lowC  ? (lowS / lowC) * P.lowGain  : 0,
+        midC  ? (midS / midC) * P.midGain  : 0,
+        highC ? (highS / highC) * P.highGain : 0
+      ];
+    }
+
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+    // ── Theme-aware shader tint (preset: #000 / #000 particles on #707070 bg) ──
+    function updateShaderTheme() {
+      const isLight = document.documentElement.classList.contains('light-theme');
+      gl.useProgram(prog);
+      if (isLight) {
+        gl.clearColor(0.98, 0.98, 0.98, 1);
+        gl.uniform3f(u.uTintColor, 0.08, 0.08, 0.08);
+        gl.uniform3f(u.uTintShadow, 0.55, 0.55, 0.55);
+      } else {
+        const g = SHADER_PRESET.bg;
+        gl.clearColor(g[0], g[1], g[2], 1);
+        gl.uniform3f(u.uTintColor, 0, 0, 0);
+        gl.uniform3f(u.uTintShadow, 0, 0, 0);
+      }
+    }
+    updateShaderTheme();
+
+    // Watch for theme changes
+    const observer = new MutationObserver(updateShaderTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
+    // ── Render loop ──
+    function frame() {
+      requestAnimationFrame(frame);
+
+      const now = performance.now() / 1000;
+      const dt = Math.min(now - lastTime, 0.1);
+      lastTime = now;
+      const P = SHADER_PRESET;
+
+      // Read from bridge
+      const fftData = ShaderAudioBridge.consume();
+      const sm = P.fftSmooth;
+      let hasAudio = false;
+      if (fftData) {
+        const bands = resampleToBands(fftData);
+        low  = lerp(low,  bands[0], sm);
+        mid  = lerp(mid,  bands[1], sm);
+        high = lerp(high, bands[2], sm);
+        energy = clamp(
+          (low * 0.42 + mid * 0.35 + high * 0.23) * P.fftResponse,
+          0, 1
+        );
+        if (energy > 0.02) hasAudio = true;
+      } else {
+        low    = lerp(low,    0, 0.08);
+        mid    = lerp(mid,    0, 0.08);
+        high   = lerp(high,   0, 0.08);
+        energy = lerp(energy, 0, 0.08);
+      }
+
+      soundAccum += dt * (P.accumAdd + energy * P.fftResponse);
+      flowX += dt * P.flowSpeed * clamp(energy, 0, 1);
+      animationTime += dt;
+
+      // ── Micro-interaction updates ──
+
+      // Decay pulse (whisper arrival): slow ease-out over ~4s
+      if (micro.pulse > 0.001) {
+        micro.pulse *= Math.pow(0.5, dt);
+      } else { micro.pulse = 0; }
+
+      // Lerp press (record button hold) — fast response
+      micro.press = lerp(micro.press, micro.pressTarget, 1 - Math.pow(0.01, dt));
+
+      // Decay glitch: ~1.2s decay
+      if (micro.glitch > 0.001) {
+        micro.glitch *= Math.pow(0.18, dt);
+      } else { micro.glitch = 0; }
+
+      // Decay seal flash: ~1.5s decay
+      if (micro.seal > 0.001) {
+        micro.seal *= Math.pow(0.22, dt);
+      } else { micro.seal = 0; }
+
+      // Idle breathing: starts after 4s, full at 8s
+      if (hasAudio || micro.press > 0.05 || micro.pulse > 0.05) {
+        micro.idleTime = 0;
+      } else {
+        micro.idleTime += dt;
+      }
+      const breathActive = clamp((micro.idleTime - 4) / 4, 0, 1);
+      micro.breathPhase += dt * 0.8;  // ~8s period
+
+      // ── Composite final uniform values ──
+
+      // Breathing oscillations
+      const breathHeight = breathActive * 0.4 * Math.sin(micro.breathPhase);
+      const breathWarp   = breathActive * 0.15 * Math.sin(micro.breathPhase * 0.67);
+      const breathExpo   = breathActive * 0.08 * Math.sin(micro.breathPhase * 0.53);
+
+      // Pulse swell (whisper arrival)
+      const pulseEnergy   = micro.pulse * 0.6;
+      const pulseHeight   = micro.pulse * 1.0;
+      const pulseWarp     = micro.pulse * 0.5;
+
+      // Press warmup (record button)
+      const pressExpo     = micro.press * 0.4;
+      const pressContrast = micro.press * 0.25;
+      const pressGrain    = micro.press * -0.5;   // noticeably cleaner
+      const pressSize     = micro.press * 2.0;
+
+      // Glitch crackle
+      const glitchRidge   = micro.glitch * 0.4;
+      const glitchGrain   = micro.glitch * 0.12;
+      const glitchFilm    = micro.glitch * 0.5;
+
+      // Seal sparkle
+      const sealHigh      = micro.seal * 1.5;
+      const sealBright    = micro.seal * 0.6;
+
+      // Final composited values
+      const finalEnergy    = clamp(energy + pulseEnergy, 0, 1);
+      const finalHigh      = clamp(high + sealHigh, 0, 1.5);
+      const finalHeightAmp = P.heightAmp + pulseHeight + breathHeight;
+      const finalWarp      = P.warpStrength + pulseWarp + breathWarp;
+      const finalExposure  = P.exposure + pressExpo + breathExpo;
+      const finalContrast  = P.contrast + pressContrast;
+      const finalGrain     = clamp(P.grainAmount + pressGrain + glitchGrain, 0, 1);
+      const finalBaseSize  = P.baseSize + pressSize;
+      const finalRidge     = P.ridgeThreshold + glitchRidge;
+      const finalFilmGrain = P.filmGrain + glitchFilm;
+      const finalBrightness = P.brightness + sealBright;
+
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(prog);
+
+      gl.uniform2f(u.uResolution, canvas.width, canvas.height);
+      gl.uniform1f(u.uAspect, canvas.width / Math.max(canvas.height, 1));
+      gl.uniformMatrix4fv(u.uMVP, false, mvp);
+      gl.uniform1f(u.uTime, animationTime);
+      gl.uniform1f(u.uLow, clamp(low, 0, 1.5));
+      gl.uniform1f(u.uMid, clamp(mid, 0, 1.5));
+      gl.uniform1f(u.uHigh, clamp(finalHigh, 0, 1.5));
+      gl.uniform1f(u.uAmplitude, clamp(finalEnergy, 0, 1));
+      gl.uniform1f(u.uSoundAccum, Math.sqrt(Math.max(0, soundAccum)) * P.noiseZScale);
+      gl.uniform1f(u.uFlowX, flowX);
+
+      // Composited uniforms (override static defaults)
+      gl.uniform1f(u.uHeightAmp, finalHeightAmp);
+      gl.uniform1f(u.uWarpStrength, finalWarp);
+      gl.uniform1f(u.uExposure, finalExposure);
+      gl.uniform1f(u.uContrast, finalContrast);
+      gl.uniform1f(u.uGrainAmount, finalGrain);
+      gl.uniform1f(u.uBaseSize, finalBaseSize);
+      gl.uniform1f(u.uRidgeThreshold, finalRidge);
+      gl.uniform1f(u.uFilmGrainPost, finalFilmGrain);
+      gl.uniform1f(u.uBrightness, finalBrightness);
+
+      gl.bindVertexArray(vao);
+      gl.drawArrays(gl.POINTS, 0, vertexCount);
+      gl.bindVertexArray(null);
+    }
+
+    requestAnimationFrame(frame);
+
+    // ── Web Audio analyser — attaches to mic stream when recording ──
+    let audioCtx = null;
+    let analyserNode = null;
+    let sourceNode = null;
+    let analyserBuf = null;
+    let analyserRAF = null;
+
+    window._shaderAttachStream = function(stream) {
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
+
+        sourceNode = audioCtx.createMediaStreamSource(stream);
+        analyserNode = audioCtx.createAnalyser();
+        analyserNode.fftSize = 512;
+        analyserNode.smoothingTimeConstant = 0.4;
+        sourceNode.connect(analyserNode);
+        // Don't connect to destination — no echo
+
+        analyserBuf = new Uint8Array(analyserNode.frequencyBinCount);
+
+        function pump() {
+          analyserRAF = requestAnimationFrame(pump);
+          analyserNode.getByteFrequencyData(analyserBuf);
+          // Normalize 0–255 to 0–1
+          const norm = new Float32Array(analyserBuf.length);
+          for (let i = 0; i < analyserBuf.length; i++) norm[i] = analyserBuf[i] / 255;
+          ShaderAudioBridge.pushFFT(norm);
+          let sum = 0;
+          for (let i = 0; i < norm.length; i++) sum += norm[i];
+          window._logoSoundLevel = sum / norm.length;
+        }
+        pump();
+      } catch(e) {
+        console.warn('Shader audio attach failed:', e);
+      }
+    };
+
+    window._shaderDetachStream = function() {
+      if (analyserRAF) { cancelAnimationFrame(analyserRAF); analyserRAF = null; }
+      if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
+      analyserNode = null;
+      window._logoSoundLevel = 0;
+    };
+
+  })();
+</script>
+</body>
+</html>

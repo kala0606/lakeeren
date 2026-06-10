@@ -1,0 +1,54 @@
+<!--
+  👋 Hello! This is an ml5.js example made and shared with ❤️.
+  Learn more about the ml5.js project: https://ml5js.org/
+  ml5.js license and Code of Conduct: https://github.com/ml5js/ml5-next-gen/blob/main/LICENSE.md
+
+  This example demonstrates segmenting a person by body parts with ml5.bodySegmentation.
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ml5.js bodySegmentation with Three.js</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.10/p5.min.js"></script>
+    <script src="https://unpkg.com/ml5@1/dist/ml5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://unpkg.com/tone@14.8.49/build/Tone.js"></script>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+      }
+      #p5Canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: -1;
+        display: none;
+      }
+      #threeCanvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="p5Canvas"></div>
+    <div id="audioHint" style="position:fixed;bottom:12px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,0.8);font:14px system-ui,sans-serif;pointer-events:none;z-index:10;">
+      Click anywhere to enable audio. If no sound: run a local server (e.g. <code>npx serve</code>) and open this page via http://localhost:3000
+    </div>
+    <div id="flipDebug" style="display:none;position:fixed;top:10px;left:10px;color:lime;font:14px monospace;z-index:100;pointer-events:none;"></div>
+    <script src="sketch.js"></script>
+  </body>
+</html>
+
+<!-- lakeeren embed override: output-only, edge-to-edge -->
+<style>
+  html,body{margin:0!important;padding:0!important;overflow:hidden!important;background:#000!important;width:100%!important;height:100%!important}
+  h1,h2,h3,h4,p,button,select,label,input,nav,aside,header,footer{display:none!important}
+  canvas{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;object-fit:cover!important;display:block!important}
+</style>

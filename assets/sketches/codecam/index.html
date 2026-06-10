@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.11.0/lib/p5.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="style.css">
+    <meta charset="utf-8" />
+  </head>
+  <body>
+    <script src="sketch.js"></script>
+  </body>
+</html>
+
+<!-- lakeeren embed override: output-only -->
+<style>
+  html,body{margin:0!important;padding:0!important;overflow:hidden!important;background:#0d0d0f!important;width:100%!important;height:100%!important}
+  h1,h2,h3,h4,p,button,select,label,form,fieldset,
+  .controls,#controls,[class*="panel"],[id*="panel"],[class*="control"],[id*="control"],
+  input,textarea,.metro-pill,#hint,.hint,[class*="slider"],[class*="toolbar"],
+  [class*="legend"],[id*="legend"],.val,#video-container,[class*="readout"],
+  [class*="badge"],[class*="status"],nav,aside,header,footer{display:none!important}
+  canvas{display:block!important;position:fixed!important;inset:0!important;margin:auto!important;
+    max-width:100%!important;max-height:100%!important}
+</style>
+
+<!-- lakeeren: hide p5-generated panel divs, edge-to-edge canvas -->
+<style>
+  body>div:not([class]):not([id]){display:none!important}
+  canvas{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;object-fit:cover!important;max-width:none!important;max-height:none!important}
+</style>

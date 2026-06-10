@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FlowField — Namma Metro</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      font-family: 'IBM Plex Mono', monospace;
+      background: #EFE8D7;
+      color: #141210;
+    }
+
+    /* ── Header ───────────────────────────────────────────────── */
+    .app-header {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      background: #EFE8D7;
+      border-bottom: 1px solid #D8D0BE;
+      z-index: 20;
+    }
+
+    .app-header h1 {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+    }
+
+    .header-right { display: flex; gap: 10px; align-items: center; }
+
+    /* Metro live indicator */
+    .metro-pill {
+      font-size: 10px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border: 1px solid #C8C0AE;
+      color: #8A8070;
+      transition: all 0.4s ease;
+      white-space: nowrap;
+    }
+    .metro-pill.loaded  { border-color: #6B7FC4; color: #6B7FC4; }
+    .metro-pill.error   { border-color: #C45538; color: #C45538; }
+
+    .frame-counter {
+      font-size: 10px;
+      color: #6B6353;
+      letter-spacing: 1px;
+      min-width: 76px;
+      text-align: right;
+    }
+
+    .hdr-btn {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      padding: 6px 14px;
+      border: 1px solid #141210;
+      background: #F6F0E3;
+      color: #141210;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .hdr-btn:hover, .hdr-btn.on { background: #141210; color: #F6F0E3; }
+    .hdr-btn#togglePanel::after   { content: ' ▴'; }
+    .hdr-btn#togglePanel.on::after { content: ' ▾'; }
+
+    /* ── Canvas ───────────────────────────────────────────────── */
+    #canvas-wrapper {
+      position: fixed;
+      top: 44px; left: 0; right: 0; bottom: 0;
+    }
+    #canvas-wrapper canvas {
+      display: block !important;
+      width: 100% !important;
+      height: 100% !important;
+    }
+
+    /* ── Controls overlay panel ───────────────────────────────── */
+    .controls-panel {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: rgba(232, 225, 208, 0.96);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-top: 1px solid #C8C0AE;
+      padding: 16px 20px 18px;
+      max-height: 60vh;
+      overflow-y: auto;
+      z-index: 15;
+      transform: translateY(0);
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .controls-panel.hidden { transform: translateY(100%); }
+
+    /* Responsive slider grid */
+    .controls-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+      gap: 14px 20px;
+    }
+
+    .slider-group { display: flex; flex-direction: column; gap: 5px; }
+    .slider-group label {
+      font-size: 10px;
+      color: #6B6353;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .slider-group input[type="range"] {
+      width: 100%;
+      height: 4px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: #CFC7B3;
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+    }
+    .slider-group input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 13px; height: 13px;
+      background: #141210; border-radius: 50%;
+    }
+    .slider-group input[type="range"]::-moz-range-thumb {
+      width: 13px; height: 13px;
+      background: #141210; border-radius: 50%; border: none;
+    }
+    .slider-value { font-size: 11px; font-weight: 600; }
+
+    /* Metro sliders use blue accent */
+    .metro-param .slider-value { color: #6B7FC4; }
+    .metro-param label { color: #6B7FC4; }
+    .metro-param input[type="range"] { background: #B8C0DC; }
+    .metro-param input[type="range"]::-webkit-slider-thumb { background: #6B7FC4; }
+    .metro-param input[type="range"]::-moz-range-thumb    { background: #6B7FC4; }
+
+    /* Full-width rows */
+    .full-row { grid-column: 1 / -1; }
+
+    /* Metro section header */
+    .metro-section-hdr {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0 6px;
+      border-top: 1px solid #C8C0AE;
+      margin-top: 4px;
+    }
+    .section-label {
+      font-size: 10px;
+      color: #6B7FC4;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      font-weight: 600;
+    }
+    .section-actions { display: flex; gap: 8px; }
+
+    /* Toggle rows */
+    .toggle-label {
+      font-size: 10px;
+      color: #6B6353;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 5px;
+    }
+    .toggle-row { display: flex; }
+    .toggle-btn {
+      flex: 1;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 7px 10px;
+      border: 1px solid #141210;
+      background: #F6F0E3;
+      color: #141210;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+    }
+    .toggle-btn + .toggle-btn { border-left: none; }
+    .toggle-btn.active { background: #141210; color: #F6F0E3; }
+
+    /* Action buttons */
+    .buttons-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .ctrl-btn {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      padding: 8px 18px;
+      border: 1px solid #141210;
+      background: #F6F0E3;
+      color: #141210;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .ctrl-btn:hover, .ctrl-btn.playing, .ctrl-btn.on {
+      background: #141210; color: #F6F0E3;
+    }
+  </style>
+</head>
+<body>
+
+  <header class="app-header">
+    <h1>FlowField</h1>
+    <div class="header-right">
+      <span class="metro-pill" id="metroPill">● Metro: fetching…</span>
+      <span class="frame-counter" id="frameCounter">Frame: 0</span>
+      <button class="hdr-btn on" id="togglePanel">Controls</button>
+    </div>
+  </header>
+
+  <div id="canvas-wrapper"></div>
+
+  <div class="controls-panel" id="controlsPanel">
+    <div class="controls-grid">
+
+      <!-- ── Base flow sliders ── -->
+      <div class="slider-group">
+        <label>Particles</label>
+        <input type="range" id="particleCount" min="50" max="2000" step="10" value="800">
+        <span class="slider-value" id="particleCountVal">800</span>
+      </div>
+      <div class="slider-group">
+        <label>Field Scale</label>
+        <input type="range" id="fieldScale" min="0.0005" max="0.015" step="0.0005" value="0.003">
+        <span class="slider-value" id="fieldScaleVal">0.0030</span>
+      </div>
+      <div class="slider-group">
+        <label>Field Speed</label>
+        <input type="range" id="fieldSpeed" min="0" max="0.02" step="0.0005" value="0.005">
+        <span class="slider-value" id="fieldSpeedVal">0.0050</span>
+      </div>
+      <div class="slider-group">
+        <label>Turbulence</label>
+        <input type="range" id="turbulence" min="0.5" max="6" step="0.1" value="2.0">
+        <span class="slider-value" id="turbulenceVal">2.0</span>
+      </div>
+      <div class="slider-group">
+        <label>Speed</label>
+        <input type="range" id="speed" min="0.5" max="8" step="0.1" value="2.0">
+        <span class="slider-value" id="speedVal">2.0</span>
+      </div>
+      <div class="slider-group">
+        <label>Steps / Frame</label>
+        <input type="range" id="stepsPerFrame" min="1" max="10" step="1" value="1">
+        <span class="slider-value" id="stepsPerFrameVal">1</span>
+      </div>
+      <div class="slider-group">
+        <label>Max Life</label>
+        <input type="range" id="maxLife" min="0" max="600" step="10" value="200">
+        <span class="slider-value" id="maxLifeVal">200</span>
+      </div>
+      <div class="slider-group">
+        <label>Trail Fade</label>
+        <input type="range" id="trailFade" min="0" max="60" step="1" value="10">
+        <span class="slider-value" id="trailFadeVal">10</span>
+      </div>
+      <div class="slider-group">
+        <label>Stroke Width</label>
+        <input type="range" id="strokeWidth" min="0.3" max="4" step="0.1" value="0.8">
+        <span class="slider-value" id="strokeWidthVal">0.8</span>
+      </div>
+
+      <!-- ── Namma Metro vortex sliders ── -->
+      <div class="full-row">
+        <div class="metro-section-hdr">
+          <span class="section-label">Namma Metro — OSM / BMRCL Live Data</span>
+          <div class="section-actions">
+            <button class="ctrl-btn on" id="showMetro">Show Stations</button>
+            <button class="ctrl-btn" id="refreshMetro">↻ Reload</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="slider-group metro-param">
+        <label>Metro Influence</label>
+        <input type="range" id="metroInfluence" min="0" max="4" step="0.05" value="1.5">
+        <span class="slider-value" id="metroInfluenceVal">1.50</span>
+      </div>
+      <div class="slider-group metro-param">
+        <label>Metro Radius (px)</label>
+        <input type="range" id="metroRadius" min="20" max="400" step="5" value="110">
+        <span class="slider-value" id="metroRadiusVal">110</span>
+      </div>
+      <div class="slider-group metro-param">
+        <label>Pulse Speed</label>
+        <input type="range" id="pulseSpeed" min="0" max="0.15" step="0.005" value="0.04">
+        <span class="slider-value" id="pulseSpeedVal">0.040</span>
+      </div>
+
+      <!-- ── Field type ── -->
+      <div class="full-row">
+        <div class="toggle-label">Field Type</div>
+        <div class="toggle-row">
+          <button class="toggle-btn active" data-field="perlin">Perlin</button>
+          <button class="toggle-btn" data-field="curl">Curl</button>
+          <button class="toggle-btn" data-field="spiral">Spiral</button>
+          <button class="toggle-btn" data-field="radial">Radial</button>
+        </div>
+      </div>
+
+      <!-- ── Palette ── -->
+      <div class="full-row">
+        <div class="toggle-label">Palette</div>
+        <div class="toggle-row">
+          <button class="toggle-btn active" data-palette="ink">Ink</button>
+          <button class="toggle-btn" data-palette="earthy">Earthy</button>
+          <button class="toggle-btn" data-palette="ocean">Ocean</button>
+          <button class="toggle-btn" data-palette="sunset">Sunset</button>
+          <button class="toggle-btn" data-palette="forest">Forest</button>
+        </div>
+      </div>
+
+      <!-- ── Action buttons ── -->
+      <div class="full-row buttons-row">
+        <button class="ctrl-btn" id="playStop">Play</button>
+        <button class="ctrl-btn" id="reset">Reset</button>
+        <button class="ctrl-btn" id="showField">Show Field</button>
+        <button class="ctrl-btn" id="download">Download SVG</button>
+        <button class="ctrl-btn" id="downloadLayers">Download Layers (ZIP)</button>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // ── Constants ────────────────────────────────────────────────
+    const PAPER   = [246, 240, 227];
+    const METRO_CLR = [107, 127, 196]; // indigo-slate for station vis
+
+    const PALETTES = {
+      ink:    ['#141210'],
+      earthy: ['#2E1810', '#6B3A20', '#A8684A', '#D8A788', '#4A5A42', '#8FA080'],
+      ocean:  ['#0F2432', '#1E4A5C', '#4E7A8A', '#93B3BD', '#2C4F5C'],
+      sunset: ['#3A1514', '#7A281C', '#C45538', '#E89968', '#4A2A1E'],
+      forest: ['#1F2C1E', '#3D4F3A', '#6A7F5E', '#9DB090', '#7A6B4E']
+    };
+
+    function hexToRgb(h) {
+      const v = parseInt(h.slice(1), 16);
+      return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+    }
+
+    // ── State ────────────────────────────────────────────────────
+    let currentPalette = 'ink';
+    let fieldSeed      = 1;
+    let particles      = [];
+    let isPlaying      = false;
+    let panelVisible   = true;
+    let showingField   = false;
+    let showingMetro   = true;
+    let simFrame       = 0;
+    let noiseT         = 0;
+
+    const DISPLAY_TRAIL_CAP = 250; // rolling window for on-screen rendering only
+
+    let params = {
+      particleCount:  800,
+      fieldScale:     0.003,
+      fieldSpeed:     0.005,
+      turbulence:     2.0,
+      speed:          2.0,
+      stepsPerFrame:  1,
+      maxLife:        200,
+      trailFade:      10,
+      strokeWidth:    0.8,
+      fieldType:      'perlin',
+      metroInfluence: 1.5,
+      metroRadius:    110,
+      pulseSpeed:     0.04,
+    };
+
+    // ── Namma Metro data (fetched from OSM Overpass) ─────────────
+    let metroStations = [];   // [{name, lat, lon, cx, cy, normX, normY, spin}]
+    let metroLoaded   = false;
+
+    const OVERPASS_URL   = 'https://overpass-api.de/api/interpreter';
+    const OVERPASS_QUERY = '[out:json][timeout:25];node["network"="Namma Metro"]["railway"="stop"]["subway"="yes"];out body;';
+
+    async function fetchMetroStations() {
+      const pill = document.getElementById('metroPill');
+      pill.textContent = '● Metro: fetching…';
+      pill.className   = 'metro-pill';
+      try {
+        const resp = await fetch(OVERPASS_URL, {
+          method: 'POST',
+          body: OVERPASS_QUERY,
+          headers: { 'Content-Type': 'text/plain' }
+        });
+        if (!resp.ok) throw new Error(resp.status);
+        const data = await resp.json();
+
+        const seen = new Set();
+        const raw  = [];
+        for (const el of data.elements) {
+          const name = el.tags?.name?.trim();
+          if (name && !seen.has(name) && el.lat && el.lon) {
+            seen.add(name);
+            raw.push({ name, lat: el.lat, lon: el.lon, code: el.tags?.code || '' });
+          }
+        }
+
+        // Normalise to [0,1] within Bangalore bounding box
+        const lats = raw.map(s => s.lat);
+        const lons = raw.map(s => s.lon);
+        const latMin = Math.min(...lats), latMax = Math.max(...lats);
+        const lonMin = Math.min(...lons), lonMax = Math.max(...lons);
+
+        metroStations = raw.map((s, i) => ({
+          ...s,
+          normX: (s.lon - lonMin) / (lonMax - lonMin),
+          normY: 1 - (s.lat - latMin) / (latMax - latMin), // flip Y (lat increases north)
+          spin:  (i % 2 === 0) ? 1 : -1, // alternate CW / CCW vortex spin
+          phaseOffset: i * 0.73,          // stagger pulses across stations
+          cx: 0, cy: 0                    // filled by projectMetroToCanvas()
+        }));
+
+        metroLoaded = true;
+        projectMetroToCanvas();
+
+        pill.textContent = `● Metro: ${metroStations.length} stations`;
+        pill.className   = 'metro-pill loaded';
+      } catch (e) {
+        console.warn('Overpass fetch failed:', e);
+        pill.textContent = '● Metro: unavailable';
+        pill.className   = 'metro-pill error';
+      }
+    }
+
+    // Re-project lat/lon normalised coords onto current canvas size (with padding).
+    function projectMetroToCanvas() {
+      if (!metroStations.length) return;
+      const PAD = 0.08; // 8% padding each side
+      for (const s of metroStations) {
+        s.cx = (PAD + s.normX * (1 - 2 * PAD)) * width;
+        s.cy = (PAD + s.normY * (1 - 2 * PAD)) * height;
+      }
+    }
+
+    // ── Flow field ───────────────────────────────────────────────
+
+    // Returns the flow angle at (x, y) at noise time t, with metro vortices added.
+    function fieldAngle(x, y, t) {
+      const nx = x * params.fieldScale;
+      const ny = y * params.fieldScale;
+      const nt = t * params.fieldSpeed;
+
+      let theta;
+      switch (params.fieldType) {
+        case 'perlin':
+          theta = noise(nx, ny, nt) * TWO_PI * params.turbulence;
+          break;
+        case 'curl': {
+          const e  = 1e-4;
+          const vx =  (noise(nx, ny + e, nt) - noise(nx, ny - e, nt)) / (2 * e);
+          const vy = -(noise(nx + e, ny, nt) - noise(nx - e, ny, nt)) / (2 * e);
+          theta = atan2(vy * params.turbulence, vx * params.turbulence);
+          break;
+        }
+        case 'spiral': {
+          const base = atan2(y - height / 2, x - width / 2) + HALF_PI;
+          theta = base + (noise(nx, ny, nt) - 0.5) * PI * params.turbulence;
+          break;
+        }
+        case 'radial': {
+          const base = atan2(y - height / 2, x - width / 2);
+          theta = base + (noise(nx, ny, nt) - 0.5) * TWO_PI * params.turbulence * 0.4;
+          break;
+        }
+      }
+
+      // ── Add Namma Metro station vortices ──────────────────────
+      if (metroLoaded && params.metroInfluence > 0) {
+        let fx = Math.cos(theta);
+        let fy = Math.sin(theta);
+        const r2max = params.metroRadius * params.metroRadius * 9; // 3× radius cutoff
+
+        for (let i = 0; i < metroStations.length; i++) {
+          const s  = metroStations[i];
+          const dx = x - s.cx;
+          const dy = y - s.cy;
+          const d2 = dx * dx + dy * dy;
+          if (d2 > r2max) continue;
+
+          // Gaussian falloff, modulated by a slow per-station pulse
+          const pulse    = 1 + 0.3 * Math.sin(noiseT * params.pulseSpeed + s.phaseOffset);
+          const r        = params.metroRadius;
+          const strength = params.metroInfluence * pulse * Math.exp(-d2 / (r * r));
+          const d        = Math.sqrt(d2) + 0.01;
+
+          // Tangential (vortex) component — perpendicular to the radius vector
+          fx += (-dy / d) * s.spin * strength;
+          fy += ( dx / d) * s.spin * strength;
+        }
+
+        return Math.atan2(fy, fx);
+      }
+
+      return theta;
+    }
+
+    // ── Particle ─────────────────────────────────────────────────
+
+    class Particle {
+      constructor() {
+        this.colorSeed = random();
+        this.svgTrail  = []; // full history from spawn — never truncated, used for export
+        this.spawnRandom();
+        if (params.maxLife > 0) this.age = Math.floor(random(params.maxLife));
+      }
+
+      spawnRandom() {
+        // Insert a null break so splitTrail knows not to connect the previous life.
+        if (this.svgTrail && this.svgTrail.length > 0) this.svgTrail.push(null);
+        this.pos   = createVector(random(width), random(height));
+        this.prev  = this.pos.copy();
+        const startPt = { x: this.pos.x, y: this.pos.y };
+        this.trail = [startPt];
+        if (this.svgTrail) this.svgTrail.push(startPt);
+        this.age   = 0;
+      }
+
+      step() {
+        this.prev = this.pos.copy();
+        const angle = fieldAngle(this.pos.x, this.pos.y, noiseT);
+        this.pos.add(p5.Vector.fromAngle(angle).mult(params.speed));
+
+        if (this.pos.x < 0)          this.pos.x += width;
+        else if (this.pos.x > width)  this.pos.x -= width;
+        if (this.pos.y < 0)          this.pos.y += height;
+        else if (this.pos.y > height) this.pos.y -= height;
+
+        this.age++;
+        const pt = { x: this.pos.x, y: this.pos.y };
+        this.trail.push(pt);
+        this.svgTrail.push(pt); // accumulate the full drawing history
+        if (this.trail.length > DISPLAY_TRAIL_CAP) this.trail.shift();
+
+        if (params.maxLife > 0 && this.age >= params.maxLife) this.spawnRandom();
+      }
+
+      drawSegment() {
+        if (dist(this.prev.x, this.prev.y, this.pos.x, this.pos.y) > 30) return;
+        line(this.prev.x, this.prev.y, this.pos.x, this.pos.y);
+      }
+    }
+
+    // ── Rendering helpers ────────────────────────────────────────
+
+    function fadeCanvas() {
+      push();
+      noStroke();
+      fill(PAPER[0], PAPER[1], PAPER[2], params.trailFade);
+      rect(0, 0, width, height);
+      pop();
+    }
+
+    function drawFieldVectors() {
+      const step = 38, len = 12;
+      push();
+      strokeCap(SQUARE);
+      strokeWeight(0.7);
+      noFill();
+      for (let x = step * 0.5; x < width; x += step) {
+        for (let y = step * 0.5; y < height; y += step) {
+          const a  = fieldAngle(x, y, noiseT);
+          const hue = ((a % TWO_PI) + TWO_PI) % TWO_PI / TWO_PI;
+          stroke(
+            lerp(60, 200, Math.abs(Math.sin(hue * Math.PI))),
+            lerp(60, 140, Math.abs(Math.sin(hue * Math.PI + 1.2))),
+            lerp(60, 200, Math.abs(Math.cos(hue * Math.PI))),
+            120
+          );
+          line(x, y, x + Math.cos(a) * len, y + Math.sin(a) * len);
+          fill(
+            lerp(60, 200, Math.abs(Math.sin(hue * Math.PI))),
+            lerp(60, 140, Math.abs(Math.sin(hue * Math.PI + 1.2))),
+            lerp(60, 200, Math.abs(Math.cos(hue * Math.PI))),
+            120
+          );
+          noStroke();
+          ellipse(x + Math.cos(a) * len, y + Math.sin(a) * len, 2.5, 2.5);
+        }
+      }
+      pop();
+    }
+
+    function drawMetroLayer() {
+      if (!metroLoaded || !metroStations.length) return;
+      push();
+      noStroke();
+      const [mr, mg, mb] = METRO_CLR;
+
+      for (let i = 0; i < metroStations.length; i++) {
+        const s     = metroStations[i];
+        const pulse = 1 + 0.35 * Math.sin(noiseT * params.pulseSpeed + s.phaseOffset);
+        const rDisp = params.metroRadius * pulse;
+
+        // Influence halo — faint filled circle
+        fill(mr, mg, mb, 18 * pulse);
+        noStroke();
+        ellipse(s.cx, s.cy, rDisp * 2, rDisp * 2);
+
+        // Outer ring at exact metroRadius
+        noFill();
+        stroke(mr, mg, mb, 35);
+        strokeWeight(0.5);
+        ellipse(s.cx, s.cy, params.metroRadius * 2, params.metroRadius * 2);
+
+        // Station dot
+        noStroke();
+        fill(mr, mg, mb, 200);
+        ellipse(s.cx, s.cy, 5, 5);
+
+        // Hot-spot centre
+        fill(PAPER[0], PAPER[1], PAPER[2], 220);
+        ellipse(s.cx, s.cy, 2.5, 2.5);
+      }
+      pop();
+    }
+
+    // ── Simulation ───────────────────────────────────────────────
+
+    function initParticles(keepTime = false) {
+      particles = [];
+      simFrame  = 0;
+      if (!keepTime) noiseT = 0;
+      noiseSeed(fieldSeed);
+      randomSeed(fieldSeed + 1);
+      document.getElementById('frameCounter').textContent = 'Frame: 0';
+      for (let i = 0; i < params.particleCount; i++) particles.push(new Particle());
+      background(PAPER[0], PAPER[1], PAPER[2]);
+    }
+
+    function setup() {
+      const wrap   = document.getElementById('canvas-wrapper');
+      const canvas = createCanvas(wrap.offsetWidth, wrap.offsetHeight);
+      canvas.parent('canvas-wrapper');
+      noLoop();
+      initParticles();
+      updateSliderDisplays();
+      attachListeners();
+      fetchMetroStations(); // async — runs in background
+    }
+
+    function windowResized() {
+      const wrap = document.getElementById('canvas-wrapper');
+      resizeCanvas(wrap.offsetWidth, wrap.offsetHeight);
+      projectMetroToCanvas();
+      initParticles(true);
+    }
+
+    function draw() {
+      if (!isPlaying) return;
+
+      fadeCanvas();
+
+      // Metro layer drawn first — behind trails, respects fading
+      if (showingMetro) drawMetroLayer();
+
+      strokeCap(ROUND);
+      strokeWeight(params.strokeWidth);
+      noFill();
+
+      for (let s = 0; s < params.stepsPerFrame; s++) {
+        noiseT++;
+        simFrame++;
+        for (const p of particles) {
+          const [r, g, b] = hexToRgb(colorFor(p));
+          stroke(r, g, b, 210);
+          p.step();
+          p.drawSegment();
+        }
+      }
+
+      if (showingField) drawFieldVectors();
+      // Count total SVG points accumulated across all particles (nulls excluded).
+      const totalPts = particles.reduce((s, p) => s + p.svgTrail.filter(Boolean).length, 0);
+      const ptsLabel = totalPts > 999 ? (totalPts / 1000).toFixed(1) + 'k' : totalPts;
+      document.getElementById('frameCounter').textContent = `Frame: ${simFrame} · SVG: ${ptsLabel} pts`;
+    }
+
+    function colorFor(p) {
+      const pal = PALETTES[currentPalette];
+      return pal[Math.floor(p.colorSeed * pal.length) % pal.length];
+    }
+
+    // ── SVG Export ───────────────────────────────────────────────
+
+    function splitTrail(trail) {
+      const segs = [];
+      let cur = [];
+      for (let i = 0; i < trail.length; i++) {
+        const pt = trail[i];
+        if (pt === null) {                          // respawn break marker
+          if (cur.length >= 2) segs.push(cur);
+          cur = [];
+          continue;
+        }
+        if (cur.length > 0) {
+          const prev = cur[cur.length - 1];
+          if (dist(prev.x, prev.y, pt.x, pt.y) > 30) { // wrap-around jump
+            if (cur.length >= 2) segs.push(cur);
+            cur = [pt];
+            continue;
+          }
+        }
+        cur.push(pt);
+      }
+      if (cur.length >= 2) segs.push(cur);
+      return segs;
+    }
+
+    function svgForParticles(colorFilter) {
+      let svg  = '<?xml version="1.0" encoding="UTF-8"?>\n';
+          svg += `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">\n`;
+      const sw = params.strokeWidth.toFixed(2);
+
+      const byColor = new Map();
+      for (const p of particles) {
+        const hex = colorFor(p);
+        if (colorFilter && hex !== colorFilter) continue;
+        if (!byColor.has(hex)) byColor.set(hex, []);
+        byColor.get(hex).push(p);
+      }
+      for (const [hex, group] of byColor) {
+        svg += `  <g stroke="${hex}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" fill="none">\n`;
+        for (const p of group)
+          for (const seg of splitTrail(p.svgTrail)) {
+            const pts = seg.map(pt => `${pt.x.toFixed(2)},${pt.y.toFixed(2)}`).join(' ');
+            svg += `    <polyline points="${pts}"/>\n`;
+          }
+        svg += '  </g>\n';
+      }
+      svg += '</svg>';
+      return svg;
+    }
+
+    function collectUsedColors() {
+      const pal  = PALETTES[currentPalette];
+      const used = new Set();
+      for (const p of particles) used.add(Math.floor(p.colorSeed * pal.length) % pal.length);
+      return [...used].sort((a, b) => a - b).map(i => ({ idx: i, hex: pal[i] }));
+    }
+
+    function triggerDownload(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    async function downloadLayers() {
+      const colors = collectUsedColors();
+      if (!colors.length) return;
+      if (colors.length === 1) {
+        triggerDownload(
+          new Blob([svgForParticles(colors[0].hex)], { type: 'image/svg+xml' }),
+          `flowfield-${currentPalette}-${colors[0].hex.slice(1)}.svg`
+        );
+        return;
+      }
+      const zip = new JSZip();
+      const manifest = [`FlowField — ${currentPalette} palette`, `${colors.length} layers.`, ''];
+      for (let i = 0; i < colors.length; i++) {
+        const { hex } = colors[i];
+        const num = String(i + 1).padStart(2, '0');
+        const fn  = `layer-${num}-${hex.slice(1)}.svg`;
+        zip.file(fn, svgForParticles(hex));
+        manifest.push(`${fn}  →  ${hex}`);
+      }
+      zip.file('PALETTE.txt', manifest.join('\n') + '\n');
+      triggerDownload(await zip.generateAsync({ type: 'blob' }), `flowfield-${currentPalette}-layers.zip`);
+    }
+
+    // ── UI ────────────────────────────────────────────────────────
+
+    function attachListeners() {
+      const sliders = [
+        { id: 'particleCount',  fmt: v => Math.round(v) },
+        { id: 'fieldScale',     fmt: v => v.toFixed(4) },
+        { id: 'fieldSpeed',     fmt: v => v.toFixed(4) },
+        { id: 'turbulence',     fmt: v => v.toFixed(1) },
+        { id: 'speed',          fmt: v => v.toFixed(1) },
+        { id: 'stepsPerFrame',  fmt: v => Math.round(v) },
+        { id: 'maxLife',        fmt: v => v === 0 ? '∞' : Math.round(v) },
+        { id: 'trailFade',      fmt: v => Math.round(v) },
+        { id: 'strokeWidth',    fmt: v => v.toFixed(1) },
+        { id: 'metroInfluence', fmt: v => v.toFixed(2) },
+        { id: 'metroRadius',    fmt: v => Math.round(v) },
+        { id: 'pulseSpeed',     fmt: v => v.toFixed(3) },
+      ];
+
+      sliders.forEach(({ id, fmt }) => {
+        document.getElementById(id).addEventListener('input', e => {
+          params[id] = parseFloat(e.target.value);
+          document.getElementById(id + 'Val').textContent = fmt(params[id]);
+          if (id === 'particleCount') {
+            while (particles.length < params.particleCount) particles.push(new Particle());
+            while (particles.length > params.particleCount) particles.pop();
+          }
+        });
+      });
+
+      document.querySelectorAll('.toggle-btn[data-field]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.toggle-btn[data-field]').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          params.fieldType = btn.dataset.field;
+        });
+      });
+
+      document.querySelectorAll('.toggle-btn[data-palette]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.toggle-btn[data-palette]').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          currentPalette = btn.dataset.palette;
+        });
+      });
+
+      document.getElementById('playStop').addEventListener('click', () => {
+        isPlaying = !isPlaying;
+        const btn = document.getElementById('playStop');
+        if (isPlaying) { btn.textContent = 'Stop'; btn.classList.add('playing'); loop(); }
+        else           { btn.textContent = 'Play'; btn.classList.remove('playing'); noLoop(); }
+      });
+
+      document.getElementById('reset').addEventListener('click', () => {
+        isPlaying = false;
+        document.getElementById('playStop').textContent = 'Play';
+        document.getElementById('playStop').classList.remove('playing');
+        noLoop();
+        fieldSeed = Math.floor(Math.random() * 100000);
+        initParticles();
+      });
+
+      document.getElementById('showField').addEventListener('click', () => {
+        showingField = !showingField;
+        document.getElementById('showField').classList.toggle('on', showingField);
+        if (!isPlaying) {
+          if (showingField) drawFieldVectors();
+          else background(PAPER[0], PAPER[1], PAPER[2]);
+        }
+      });
+
+      document.getElementById('showMetro').addEventListener('click', () => {
+        showingMetro = !showingMetro;
+        document.getElementById('showMetro').classList.toggle('on', showingMetro);
+      });
+
+      document.getElementById('refreshMetro').addEventListener('click', () => {
+        metroLoaded = false;
+        metroStations = [];
+        fetchMetroStations();
+      });
+
+      document.getElementById('download').addEventListener('click', () => {
+        triggerDownload(
+          new Blob([svgForParticles()], { type: 'image/svg+xml' }),
+          'flowfield.svg'
+        );
+      });
+
+      document.getElementById('downloadLayers').addEventListener('click', downloadLayers);
+
+      document.getElementById('togglePanel').addEventListener('click', () => {
+        panelVisible = !panelVisible;
+        document.getElementById('controlsPanel').classList.toggle('hidden', !panelVisible);
+        document.getElementById('togglePanel').classList.toggle('on', panelVisible);
+      });
+    }
+
+    function updateSliderDisplays() {
+      document.getElementById('particleCountVal').textContent  = Math.round(params.particleCount);
+      document.getElementById('fieldScaleVal').textContent     = params.fieldScale.toFixed(4);
+      document.getElementById('fieldSpeedVal').textContent     = params.fieldSpeed.toFixed(4);
+      document.getElementById('turbulenceVal').textContent     = params.turbulence.toFixed(1);
+      document.getElementById('speedVal').textContent          = params.speed.toFixed(1);
+      document.getElementById('stepsPerFrameVal').textContent  = Math.round(params.stepsPerFrame);
+      document.getElementById('maxLifeVal').textContent        = params.maxLife === 0 ? '∞' : Math.round(params.maxLife);
+      document.getElementById('trailFadeVal').textContent      = Math.round(params.trailFade);
+      document.getElementById('strokeWidthVal').textContent    = params.strokeWidth.toFixed(1);
+      document.getElementById('metroInfluenceVal').textContent = params.metroInfluence.toFixed(2);
+      document.getElementById('metroRadiusVal').textContent    = Math.round(params.metroRadius);
+      document.getElementById('pulseSpeedVal').textContent     = params.pulseSpeed.toFixed(3);
+    }
+  </script>
+</body>
+</html>
+
+<!-- lakeeren embed override: output-only -->
+<style>
+  html,body{margin:0!important;padding:0!important;overflow:hidden!important;background:#0d0d0f!important;width:100%!important;height:100%!important}
+  h1,h2,h3,h4,p,button,select,label,form,fieldset,
+  .controls,#controls,[class*="panel"],[id*="panel"],[class*="control"],[id*="control"],
+  input,textarea,.metro-pill,#hint,.hint,[class*="slider"],[class*="toolbar"],
+  [class*="legend"],[id*="legend"],.val,#video-container,[class*="readout"],
+  [class*="badge"],[class*="status"],nav,aside,header,footer{display:none!important}
+  canvas{display:block!important;position:fixed!important;inset:0!important;margin:auto!important;
+    max-width:100%!important;max-height:100%!important}
+</style>
+
+<style>#canvas-wrapper{top:0!important}</style>
+<script>
+  // FLOW preset — spiral field, earthy palette, full traced paths, no metro
+  addEventListener('load',function(){
+    setTimeout(function(){
+      params.fieldSpeed     = 0;
+      params.turbulence     = 0.5;
+      params.speed          = 4.0;
+      params.stepsPerFrame  = 1;
+      params.maxLife        = 200;
+      params.trailFade      = 0;
+      params.strokeWidth    = 0.8;
+      params.fieldType      = 'spiral';
+      params.metroInfluence = 0;
+      currentPalette = 'earthy';
+      showingMetro   = false;
+      metroStations  = [];
+      initParticles();
+      var b=document.getElementById('playStop');
+      if(b && !/stop/i.test(b.textContent)) b.click();
+    },500);
+  });
+</script>

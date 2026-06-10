@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MONOCHROME</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#fff}canvas{display:block}</style>
+</head>
+<body>
+<script>
+// MONOCHROME — black & white animated grid background (from digital-anatomy)
+let SEED = 4096 + 7;
+const symmetry = 50;
+// new composition every few seconds
+setInterval(function(){
+  SEED = Math.floor(Math.random() * 100000);
+  noiseSeed(SEED);
+}, 5000);
+
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+}
+
+function draw() {
+  background(255);
+  drawCubeBackground();
+}
+
+function drawCubeBackground() {
+  randomSeed(SEED);
+  const t = symmetry / 100;
+  const gridThreshold = 0.5;
+
+  const logicalSize = 480;
+  const s = max(width, height) / logicalSize;
+  const cx = width / 2;
+  const cy = height / 2;
+
+  push();
+  translate(cx, cy);
+  scale(s);
+
+  noStroke();
+  rectMode(CENTER);
+  for (let i = random(10, 15); i <= 145; i += random(10, 30)) {
+    const side = i * 4;
+    const cellSize = i;
+    for (let x = -side / 2; x <= side / 2; x += cellSize) {
+      for (let y = -side / 2; y <= side / 2; y += cellSize) {
+        if (x === -side / 2 || x === side / 2 || y === -side / 2 || y === side / 2) {
+          push();
+          translate(x, y);
+          const n1 = noise(x * 0.1, y * 0.1);
+          const n2 = noise(-x * 0.1, y * 0.1);
+          const n = (1 - t) * n1 + t * (n1 + n2) / 2;
+          if (n < gridThreshold) fill(0); else fill(255);
+          drawTime(cellSize, x);
+          pop();
+        }
+      }
+    }
+  }
+  pop();
+}
+
+function drawTime(cellSize, x) {
+  for (let i = 0; i < 100; i++) {
+    translate(map(i, 0, 100, 0, cellSize), 0);
+    rect(0, 0, noise(x / 100, cellSize, frameCount / 100) * noise(x / 100) * cellSize, cellSize / 2);
+  }
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+}
+</script>
+</body>
+</html>
